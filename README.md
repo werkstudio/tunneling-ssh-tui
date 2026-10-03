@@ -80,27 +80,122 @@
 
 ---
 
-## 🛠️ Instalasi & Menjalankan
+## 🛠️ Panduan Instalasi (How to Install)
 
-### Kebutuhan:
-- Go 1.22 atau lebih baru.
-- OpenSSH client (`ssh`).
-- macOS, Linux, atau Windows (dengan WSL/terminal modern).
+`sshtui` dapat dipasang di berbagai sistem operasi (**macOS**, **Linux**, dan **Windows**). Pastikan Anda memiliki **OpenSSH Client (`ssh`)** dan **Go 1.22+** terpasang di sistem Anda.
 
-### Build dari Sumber:
+---
+
+### Cara 1: Universal via `go install` (Semua OS)
+
+Jika Anda sudah memiliki Go di mesin Anda, cara tercepat adalah memasang binary langsung:
+
 ```bash
-git clone https://github.com/username/sshtui.git
-cd sshtui
-
-# Kompilasi binary
-make build
-
-# Jalankan langsung
-./bin/sshtui
-
-# Pasang ke ~/.local/bin agar dapat dipanggil dari mana saja
-make install
+go install github.com/werkstudio/tunneling-ssh-tui/cmd/sshtui@latest
 ```
+
+> **Catatan**: Pastikan direktori bin Go (`$HOME/go/bin` atau `$GOPATH/bin`) sudah terdaftar di `PATH` shell Anda.
+
+---
+
+### Cara 2: Instalasi per Sistem Operasi (Build dari Sumber)
+
+#### 🍏 macOS (Apple Silicon & Intel)
+
+macOS sudah dilengkapi OpenSSH bawaan dan clipboard tool `pbcopy`.
+
+1. **Clone repository:**
+   ```bash
+   git clone https://github.com/werkstudio/tunneling-ssh-tui.git
+   cd tunneling-ssh-tui
+   ```
+
+2. **Kompilasi dan pasang:**
+   ```bash
+   # Kompilasi binary ke ./bin/sshtui
+   make build
+
+   # Pasang binary ke ~/.local/bin/sshtui
+   make install
+   ```
+
+3. **Pastikan `~/.local/bin` ada di PATH:**
+   Jika belum ada, tambahkan ke `~/.zshrc` (atau `~/.bash_profile`):
+   ```bash
+   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+   source ~/.zshrc
+   ```
+
+---
+
+#### 🐧 Linux (Ubuntu, Debian, Fedora, Arch Linux)
+
+Pada Linux, pastikan utility clipboard (`xclip` untuk X11 atau `wl-clipboard` untuk Wayland) terpasang agar fitur salin URL (`c`) berfungsi optimal.
+
+1. **Pasang Dependensi Dasar:**
+   - **Ubuntu / Debian**:
+     ```bash
+     sudo apt update
+     sudo apt install -y git golang openssh-client xclip # atau: wl-clipboard (Wayland)
+     ```
+   - **Fedora / RHEL**:
+     ```bash
+     sudo dnf install -y git golang openssh-clients xclip # atau: wl-clipboard
+     ```
+   - **Arch Linux**:
+     ```bash
+     sudo pacman -S git go openssh xclip # atau: wl-clipboard
+     ```
+
+2. **Clone & Pasang:**
+   ```bash
+   git clone https://github.com/werkstudio/tunneling-ssh-tui.git
+   cd tunneling-ssh-tui
+   make build
+
+   # Opsi A: Pasang untuk user saat ini (~/.local/bin)
+   make install
+
+   # Opsi B: Pasang system-wide (untuk seluruh pengguna)
+   sudo install -m 755 bin/sshtui /usr/local/bin/
+   ```
+
+---
+
+#### 🪟 Windows
+
+Ada dua cara menjalankan `sshtui` di Windows:
+
+##### Opsi A: Menggunakan WSL (Windows Subsystem for Linux) — *Direkomendasikan*
+1. Buka terminal WSL (Ubuntu/Debian).
+2. Ikuti langkah instalasi untuk **Linux** di atas.
+
+##### Opsi B: Native Windows (PowerShell / Command Prompt)
+1. Pastikan **Go** dan **OpenSSH Client** (bawaan Windows Settings -> Optional Features) sudah aktif.
+2. Buka PowerShell dan jalankan:
+   ```powershell
+   git clone https://github.com/werkstudio/tunneling-ssh-tui.git
+   cd tunneling-ssh-tui
+   go build -o sshtui.exe ./cmd/sshtui
+   ```
+3. Pindahkan `sshtui.exe` ke direktori yang terdaftar di environment variable `PATH` (misalnya `C:\Program Files\sshtui\` atau folder tools pribadi Anda).
+
+---
+
+### Verifikasi Instalasi
+
+Jalankan perintah berikut di terminal untuk memastikan `sshtui` sudah terpasang dan dapat dipanggil dengan benar:
+
+```bash
+sshtui path
+sshtui list
+```
+
+Untuk meluncurkan antarmuka visual TUI:
+```bash
+sshtui
+```
+
 
 ---
 
