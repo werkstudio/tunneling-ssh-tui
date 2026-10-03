@@ -478,7 +478,8 @@ func (m model) View() string {
 		rows = append(rows, dimStyle.Render("Belum ada tunnel. Tekan n untuk menambah."))
 	}
 	for i, t := range m.cfg.Tunnels {
-		st, up, _ := m.mgr.Get(t.Name).Snapshot()
+		snap := m.mgr.Get(t.Name).Snapshot()
+		st, up := snap.Status, snap.Uptime
 		dot := statusStyle[st].Render("●")
 		route := fmt.Sprintf("localhost:%d → %s:%d", t.LocalPort, t.Host, t.RemotePort)
 		if t.Type == "reverse" {
@@ -509,7 +510,8 @@ func (m model) View() string {
 	var logLines []string
 	if t, ok := m.selected(); ok {
 		logTitle = "Log — " + t.Name
-		_, _, logs := m.mgr.Get(t.Name).Snapshot()
+		snap := m.mgr.Get(t.Name).Snapshot()
+		logs := snap.Logs
 		n := m.height - len(m.cfg.Tunnels) - 12
 		if n < 4 {
 			n = 4

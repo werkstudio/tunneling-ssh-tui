@@ -58,6 +58,13 @@ func ProbeHost(c config.Config, host string) (time.Duration, error) {
 		targetAddr = parts[1]
 	}
 
+	if h, p, err := net.SplitHostPort(targetAddr); err == nil {
+		targetAddr = h
+		if parsedPort, err := strconv.Atoi(p); err == nil && parsedPort != 0 {
+			port = parsedPort
+		}
+	}
+
 	addr := net.JoinHostPort(targetAddr, strconv.Itoa(port))
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)

@@ -76,26 +76,22 @@ func TestProbeHost(t *testing.T) {
 		t.Errorf("expected cached rtt %v, got %v", rtt, rttCached)
 	}
 
-	// Test host with user@host syntax when not present in cfg.Hosts
+	// Test host with user@host:port syntax when not present in cfg.Hosts
 	lUser, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
 	defer lUser.Close()
 	_, userPortStr, _ := net.SplitHostPort(lUser.Addr().String())
-	userPort, _ := strconv.Atoi(userPortStr)
 
-	cfgEmpty := config.Config{
-		Hosts: map[string]config.HostCfg{
-			"userhost": {Address: "127.0.0.1", Port: userPort},
-		},
-	}
-	rttUser, errUser := ProbeHost(cfgEmpty, "userhost")
+	cfgEmpty := config.Config{}
+	userHost := "user@127.0.0.1:" + userPortStr
+	rttUser, errUser := ProbeHost(cfgEmpty, userHost)
 	if errUser != nil {
-		t.Fatalf("unexpected error probing userhost: %v", errUser)
+		t.Fatalf("unexpected error probing %s: %v", userHost, errUser)
 	}
 	if rttUser <= 0 {
-		t.Errorf("expected positive rtt for userhost, got %v", rttUser)
+		t.Errorf("expected positive rtt for %s, got %v", userHost, rttUser)
 	}
 
 	// Unreachable host should return an error
