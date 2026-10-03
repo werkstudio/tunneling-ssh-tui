@@ -54,6 +54,33 @@ func TestHeaderBar(t *testing.T) {
 	}
 }
 
+func TestHeaderBar_LongConfigPathTruncation(t *testing.T) {
+	cfg := config.Config{
+		Hosts: map[string]config.HostCfg{
+			"vps": {Address: "127.0.0.1", User: "root", Port: 22},
+		},
+		Tunnels: []config.TunnelCfg{
+			{Name: "T1", Host: "vps", Type: "local", LocalPort: 8081, RemotePort: 80},
+		},
+	}
+	mgr := tunnel.NewManager()
+	longPath := "/very/long/nested/path/to/directory/with/lots/of/levels/and/sublevels/config.toml"
+	m := New(cfg, longPath, mgr).(model)
+	m.width = 95
+	m.height = 30
+
+	view := m.View()
+
+	// Should contain truncated path with ellipsis "…"
+	if !strings.Contains(view, "…") {
+		t.Errorf("expected view to contain truncated path with ellipsis '…', got:\n%s", view)
+	}
+	// Shouldn't contain full path
+	if strings.Contains(view, longPath) {
+		t.Errorf("expected long path to be truncated, but full path was found")
+	}
+}
+
 func TestViewInspector(t *testing.T) {
 	cfg := config.Config{
 		Hosts: map[string]config.HostCfg{

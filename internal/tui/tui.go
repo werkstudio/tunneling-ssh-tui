@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -735,16 +736,26 @@ func (m model) viewHeader(w int) string {
 	pillErr := pillErrStyle.Render(fmt.Sprintf("▲ %d Error", errCount))
 	pill := fmt.Sprintf("[ %s  ·  %s  ·  %s ]", pillAktif, pillBerhenti, pillErr)
 
-	cfgPath := dimStyle.Render(m.path)
+	displayPath := m.path
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(displayPath, home) {
+		displayPath = "~" + strings.TrimPrefix(displayPath, home)
+	}
 
 	if w >= 90 {
-		gap := w - lipgloss.Width(left) - lipgloss.Width(pill) - lipgloss.Width(cfgPath)
-		if gap >= 4 {
-			gap1 := gap / 2
-			gap2 := gap - gap1
-			return left + strings.Repeat(" ", gap1) + pill + strings.Repeat(" ", gap2) + cfgPath + "\n\n"
+		maxPath := w - lipgloss.Width(left) - lipgloss.Width(pill) - 4
+		if maxPath >= 10 {
+			if len([]rune(displayPath)) > maxPath {
+				displayPath = truncate(displayPath, maxPath)
+			}
+			cfgPath := dimStyle.Render(displayPath)
+			gap := w - lipgloss.Width(left) - lipgloss.Width(pill) - lipgloss.Width(cfgPath)
+			if gap >= 4 {
+				gap1 := gap / 2
+				gap2 := gap - gap1
+				return left + strings.Repeat(" ", gap1) + pill + strings.Repeat(" ", gap2) + cfgPath + "\n\n"
+			}
+			return left + "  " + pill + "  " + cfgPath + "\n\n"
 		}
-		return left + "  " + pill + "  " + cfgPath + "\n\n"
 	}
 
 	if lipgloss.Width(left)+lipgloss.Width(pill)+2 <= w {

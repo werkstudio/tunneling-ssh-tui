@@ -17,12 +17,39 @@ import (
 const usage = `sshtui — SSH tunnel manager
 
 Pemakaian:
-  sshtui                 buka TUI
-  sshtui list            tampilkan tunnel di config
+  sshtui                 buka antarmuka TUI interaktif
+  sshtui list            tampilkan daftar tunnel di config
   sshtui scan <host>     deteksi port yang listen di server (alias [host.*], alias ssh, atau user@host)
   sshtui up <nama>...    jalankan tunnel di foreground (Ctrl+C untuk berhenti)
   sshtui up --all        jalankan semua tunnel
-  sshtui path            tampilkan lokasi config
+  sshtui path            tampilkan lokasi file config
+
+Pintasan TUI:
+  ↑↓ / jk                pilih tunnel
+  enter / space          start / stop tunnel
+  r                      restart tunnel yang dipilih
+  a / x                  start semua / stop semua tunnel
+  /                      filter / pencarian instan nama & host (Esc untuk reset)
+  c                      salin URL tunnel (http://localhost:<port>) ke clipboard
+  o                      buka URL tunnel di browser default
+  ?                      buka / tutup modal bantuan pintasan
+  PgUp / PgDn (J / K)    scroll viewport log koneksi di panel inspeksi
+  n / e / d              tambah / edit / hapus tunnel
+  q                      keluar (semua tunnel otomatis dimatikan)
+
+Formulir & Deteksi Port:
+  tab / shift+tab        pindah field input
+  space / ←→             ubah pilihan tipe & autostart
+  ctrl+d                 deteksi port remote via SSH (animasi spinner & selector)
+  ctrl+s                 simpan tunnel ke konfigurasi
+  esc                    batal
+
+Fitur & Kapabilitas:
+  - Tampilan split-pane responsif (daftar tunnel & panel inspeksi koneksi)
+  - Diagram visual alur rute tunnel (Local <-> Host <-> Remote)
+  - Deteksi port listener lokal secara real-time
+  - Pemantauan latensi RTT host remote
+  - Viewport log scrollable per-tunnel
 
 Config: ~/.config/sshtui/config.toml (override dengan env SSHTUI_CONFIG)
 `
