@@ -276,23 +276,51 @@ func (m *model) selected() (config.TunnelCfg, bool) {
 	return m.cfg.Tunnels[idx], true
 }
 
+func (m model) usableBodyHeight() int {
+	w := m.width
+	if w < 60 {
+		w = 60
+	}
+	hdr := m.viewHeader(w)
+	hdrLines := strings.Count(hdr, "\n")
+
+	footerLines := 1
+	if m.mode == modeConfirm || m.filtering {
+		footerLines = 1
+	} else if m.msg != "" {
+		footerLines = 2
+	}
+	h := m.height
+	if h <= 0 {
+		h = 24
+	}
+	avail := h - hdrLines - footerLines
+	if avail < 6 {
+		avail = 6
+	}
+	return avail
+}
+
 func (m model) logHeight() int {
+	avail := m.usableBodyHeight()
 	if m.width >= 90 {
-		h := m.height - 18
-		if h < 4 {
-			h = 4
+		inspH := 12
+		if avail < 18 {
+			inspH = 8
 		}
-		return h
+		lh := avail - inspH - 3
+		if lh < 2 {
+			lh = 2
+		}
+		return lh
 	}
-	visCount := len(m.visibleIndices())
-	h := m.height - visCount - 16
-	if m.filtering || m.filterQuery != "" {
-		h -= 2
+	// Stacked mode
+	// tableBox: ~6 lines, insp: 8 lines, log chrome: 3 lines
+	lh := avail - 6 - 8 - 3
+	if lh < 2 {
+		lh = 2
 	}
-	if h < 4 {
-		h = 4
-	}
-	return h
+	return lh
 }
 
 func (m *model) clampLogScroll() {
@@ -764,8 +792,16 @@ func (m model) viewHeader(w int) string {
 	return left + "\n" + pill + "\n\n"
 }
 
-func (m model) viewInspector(t config.TunnelCfg, snap tunnel.Snapshot, inner int) string {
-	header := lipgloss.NewStyle().Foreground(cAccent).Bold(true).Render(fmt.Sprintf("[ Inspektor Koneksi: %s ]", t.Name))
+func (m model) viewInspector(t config.TunnelCfg, snap tunnel.Snapshot, inner int, compact ...bool) string {
+	cWidth := inner - 4
+	if cWidth < 20 {
+		cWidth = 20
+	}
+
+	isCompact := len(compact) > 0 && compact[0]
+
+	title := fmt.Sprintf("[ Inspektor Koneksi: %s ]", t.Name)
+	header := lipgloss.NewStyle().Foreground(cAccent).Bold(true).Render(truncate(title, cWidth))
 
 	hostDest := t.Host
 	if h, ok := m.cfg.Hosts[t.Host]; ok {
@@ -782,62 +818,113 @@ func (m model) viewInspector(t config.TunnelCfg, snap tunnel.Snapshot, inner int
 		hostDest = fmt.Sprintf("%s:22", hostDest)
 	}
 	diag := routeDiagram(t, hostDest)
-	diag = truncate(diag, inner)
+	if cWidth > 4 {
+		diag = truncate(diag, cWidth-2)
+	}
+
+	inspLabelWidth := 16
+	if cWidth < 45 {
+		inspLabelWidth = 14
+	}
+	inspLabel := lipgloss.NewStyle().Foreground(cDim).Width(inspLabelWidth)
+	valWidth := cWidth - inspLabelWidth - 2
+	if valWidth < 10 {
+		valWidth = 10
+	}
 
 	var latencyBadge string
 	if rtt, err := tunnel.ProbeHost(m.cfg, t.Host); err != nil {
-		latencyBadge = errStyle.Render("✗ Tidak Terjangkau")
+		txt := "✗ Tidak Terjangkau"
+		if valWidth < 18 {
+			txt = "✗ Offline"
+		}
+		latencyBadge = errStyle.Render(truncate(txt, valWidth))
 	} else {
 		ms := rtt.Milliseconds()
 		switch {
 		case ms < 50:
-			latencyBadge = lipgloss.NewStyle().Foreground(cGreen).Render(fmt.Sprintf("● %dms (Sangat Cepat)", ms))
+			if valWidth >= 20 {
+				latencyBadge = lipgloss.NewStyle().Foreground(cGreen).Render(fmt.Sprintf("● %dms (Sangat Cepat)", ms))
+			} else {
+				latencyBadge = lipgloss.NewStyle().Foreground(cGreen).Render(fmt.Sprintf("● %dms", ms))
+			}
 		case ms <= 150:
-			latencyBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("#00D7D7")).Render(fmt.Sprintf("● %dms (Stabil)", ms))
+			if valWidth >= 16 {
+				latencyBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("#00D7D7")).Render(fmt.Sprintf("● %dms (Stabil)", ms))
+			} else {
+				latencyBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("#00D7D7")).Render(fmt.Sprintf("● %dms", ms))
+			}
 		case ms <= 300:
-			latencyBadge = lipgloss.NewStyle().Foreground(cYellow).Render(fmt.Sprintf("▲ %dms (Sedang)", ms))
+			if valWidth >= 16 {
+				latencyBadge = lipgloss.NewStyle().Foreground(cYellow).Render(fmt.Sprintf("▲ %dms (Sedang)", ms))
+			} else {
+				latencyBadge = lipgloss.NewStyle().Foreground(cYellow).Render(fmt.Sprintf("▲ %dms", ms))
+			}
 		default:
-			latencyBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render(fmt.Sprintf("▲ %dms (Lambat)", ms))
+			if valWidth >= 16 {
+				latencyBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render(fmt.Sprintf("▲ %dms (Lambat)", ms))
+			} else {
+				latencyBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render(fmt.Sprintf("▲ %dms", ms))
+			}
 		}
 	}
 
 	isListening := tunnel.CheckLocalPort(t.BindAddr(), t.LocalPort)
 	var listenerBadge string
+	bindAddrStr := fmt.Sprintf("%s:%d", t.BindAddr(), t.LocalPort)
+	if valWidth < 25 {
+		bindAddrStr = fmt.Sprintf(":%d", t.LocalPort)
+	}
 	if isListening {
-		listenerBadge = okStyle.Render(fmt.Sprintf("● %s:%d listening", t.BindAddr(), t.LocalPort))
+		listenerBadge = okStyle.Render(truncate(fmt.Sprintf("● %s listening", bindAddrStr), valWidth))
 	} else {
 		switch snap.Status {
 		case tunnel.Running:
-			listenerBadge = errStyle.Render(fmt.Sprintf("✗ %s:%d belum terbuka", t.BindAddr(), t.LocalPort))
+			listenerBadge = errStyle.Render(truncate(fmt.Sprintf("✗ %s belum terbuka", bindAddrStr), valWidth))
 		case tunnel.Starting:
-			listenerBadge = lipgloss.NewStyle().Foreground(cYellow).Render(fmt.Sprintf("◌ %s:%d menunggu bind...", t.BindAddr(), t.LocalPort))
+			listenerBadge = lipgloss.NewStyle().Foreground(cYellow).Render(truncate(fmt.Sprintf("◌ %s menunggu...", bindAddrStr), valWidth))
 		default:
-			listenerBadge = dimStyle.Render(fmt.Sprintf("○ %s:%d not listening", t.BindAddr(), t.LocalPort))
+			listenerBadge = dimStyle.Render(truncate(fmt.Sprintf("○ %s not listening", bindAddrStr), valWidth))
 		}
 	}
 
 	var statusText string
 	switch snap.Status {
 	case tunnel.Running:
-		statusText = okStyle.Render(fmt.Sprintf("● Berjalan (Uptime: %s)", fmtDur(snap.Uptime)))
+		txt := fmt.Sprintf("● Berjalan (Uptime: %s)", fmtDur(snap.Uptime))
+		statusText = okStyle.Render(truncate(txt, valWidth))
 	case tunnel.Reconnecting:
 		retrySec := int(snap.RetryIn.Seconds())
 		if retrySec <= 0 {
 			retrySec = 1
 		}
-		statusText = lipgloss.NewStyle().Foreground(cYellow).Render(fmt.Sprintf("▲ Reconnecting (#%d, coba lagi dlm %ds)", snap.RetryCount, retrySec))
+		var txt string
 		if snap.LastError != "" {
-			statusText += " " + errStyle.Render(fmt.Sprintf("[%s]", truncate(snap.LastError, 25)))
+			prefix := fmt.Sprintf("▲ Reconnecting #%d: ", snap.RetryCount)
+			rem := valWidth - len([]rune(prefix))
+			if rem > 0 {
+				txt = prefix + truncate(snap.LastError, rem)
+			} else {
+				txt = truncate(prefix, valWidth)
+			}
+		} else {
+			txt = fmt.Sprintf("▲ Reconnecting (#%d, %ds)", snap.RetryCount, retrySec)
 		}
+		statusText = lipgloss.NewStyle().Foreground(cYellow).Render(truncate(txt, valWidth))
 	case tunnel.Failed:
-		statusText = errStyle.Render("✗ Gagal")
+		txt := "✗ Gagal"
 		if snap.LastError != "" {
-			statusText += " " + errStyle.Render(fmt.Sprintf("[%s]", truncate(snap.LastError, 30)))
+			prefix := "✗ Gagal: "
+			rem := valWidth - len([]rune(prefix))
+			if rem > 0 {
+				txt = prefix + truncate(snap.LastError, rem)
+			}
 		}
+		statusText = errStyle.Render(truncate(txt, valWidth))
 	case tunnel.Starting:
-		statusText = lipgloss.NewStyle().Foreground(cYellow).Render("◌ Memulai...")
+		statusText = lipgloss.NewStyle().Foreground(cYellow).Render(truncate("◌ Memulai...", valWidth))
 	default:
-		statusText = dimStyle.Render("○ Berhenti")
+		statusText = dimStyle.Render(truncate("○ Berhenti", valWidth))
 	}
 
 	user := "-"
@@ -859,40 +946,69 @@ func (m model) viewInspector(t config.TunnelCfg, snap tunnel.Snapshot, inner int
 		hostAddr = parts[1]
 	}
 	credText := fmt.Sprintf("user: %s  |  host: %s  |  key: %s", user, hostAddr, key)
+	credText = truncate(credText, valWidth)
 
-	inspLabel := lipgloss.NewStyle().Foreground(cDim).Width(18)
 	var rows []string
-	rows = append(rows, header, "")
-	rows = append(rows, dimStyle.Render("Rute Koneksi:"))
-	rows = append(rows, "  "+diag, "")
-	rows = append(rows, dimStyle.Render("Telemetri & Kesehatan:"))
-	rows = append(rows, inspLabel.Render("  SSH Latency")+": "+latencyBadge)
-	rows = append(rows, inspLabel.Render("  Local Listener")+": "+listenerBadge)
-	rows = append(rows, inspLabel.Render("  Siklus Hidup")+": "+statusText)
-	rows = append(rows, inspLabel.Render("  Kredensial")+": "+dimStyle.Render(credText))
+	if isCompact {
+		rows = append(rows, header)
+		rows = append(rows, "  "+diag)
+		rows = append(rows, inspLabel.Render("  SSH Latency")+": "+latencyBadge)
+		rows = append(rows, inspLabel.Render("  Local Listener")+": "+listenerBadge)
+		rows = append(rows, inspLabel.Render("  Siklus Hidup")+": "+statusText)
+		rows = append(rows, inspLabel.Render("  Kredensial")+": "+dimStyle.Render(credText))
+	} else {
+		rows = append(rows, header, "")
+		rows = append(rows, dimStyle.Render("Rute Koneksi:"))
+		rows = append(rows, "  "+diag, "")
+		rows = append(rows, dimStyle.Render("Telemetri & Kesehatan:"))
+		rows = append(rows, inspLabel.Render("  SSH Latency")+": "+latencyBadge)
+		rows = append(rows, inspLabel.Render("  Local Listener")+": "+listenerBadge)
+		rows = append(rows, inspLabel.Render("  Siklus Hidup")+": "+statusText)
+		rows = append(rows, inspLabel.Render("  Kredensial")+": "+dimStyle.Render(credText))
+	}
 
 	return boxStyle.Width(inner).Render(strings.Join(rows, "\n"))
 }
 
-func viewInspector(t config.TunnelCfg, snap tunnel.Snapshot, inner int) string {
-	return model{}.viewInspector(t, snap, inner)
+func viewInspector(t config.TunnelCfg, snap tunnel.Snapshot, inner int, compact ...bool) string {
+	return model{}.viewInspector(t, snap, inner, compact...)
 }
 
 func (m model) viewLogPane(t config.TunnelCfg, logs []string, inner, height int) string {
+	cWidth := inner - 4
+	if cWidth < 20 {
+		cWidth = 20
+	}
+
 	title := fmt.Sprintf("Log — %s", t.Name)
 	if m.logScroll > 0 {
 		title += fmt.Sprintf(" [▲ %d]", m.logScroll)
 	}
+
+	hdrInfo := fmt.Sprintf("(%d baris) · PgUp/PgDn / J/K", len(logs))
+	if lipgloss.Width(title)+1+lipgloss.Width(hdrInfo) > cWidth {
+		hdrInfo = fmt.Sprintf("(%d) · PgUp/PgDn / J/K", len(logs))
+	}
+	if lipgloss.Width(title)+1+lipgloss.Width(hdrInfo) > cWidth {
+		hdrInfo = fmt.Sprintf("(%d) · PgUp/PgDn", len(logs))
+	}
+	if lipgloss.Width(title)+1+lipgloss.Width(hdrInfo) > cWidth {
+		hdrInfo = fmt.Sprintf("(%d)", len(logs))
+	}
+	maxTitle := cWidth - lipgloss.Width(hdrInfo) - 1
+	if maxTitle > 4 && lipgloss.Width(title) > maxTitle {
+		title = truncate(title, maxTitle)
+	}
 	header := lipgloss.NewStyle().Foreground(cAccent).Bold(true).Render(title) +
-		" " + dimStyle.Render(fmt.Sprintf("(%d baris) · PgUp/PgDn / J/K scroll", len(logs)))
+		" " + dimStyle.Render(hdrInfo)
 
 	if height <= 0 {
-		height = 6
+		height = 4
 	}
 
 	var logLines []string
 	if len(logs) == 0 {
-		logLines = append(logLines, dimStyle.Render("(belum ada log)"))
+		logLines = append(logLines, dimStyle.Render(truncate("(belum ada log)", cWidth)))
 	} else {
 		totalLogs := len(logs)
 		if totalLogs > height {
@@ -912,7 +1028,7 @@ func (m model) viewLogPane(t config.TunnelCfg, logs []string, inner, height int)
 			logs = logs[start:end]
 		}
 		for _, l := range logs {
-			logLines = append(logLines, dimStyle.Render(truncate(l, inner)))
+			logLines = append(logLines, dimStyle.Render(truncate(l, cWidth)))
 		}
 	}
 	var rows []string
@@ -925,10 +1041,10 @@ func viewLogPane(t config.TunnelCfg, logs []string, inner, height int) string {
 	return model{}.viewLogPane(t, logs, inner, height)
 }
 
-func (m model) viewTunnelTable(inner int) string {
-	contentWidth := inner - 2
-	if contentWidth < 30 {
-		contentWidth = 30
+func (m model) viewTunnelTable(inner int, maxRows ...int) string {
+	contentWidth := inner - 4
+	if contentWidth < 20 {
+		contentWidth = 20
 	}
 
 	var rows []string
@@ -943,8 +1059,8 @@ func (m model) viewTunnelTable(inner int) string {
 	}
 
 	nameWidth := contentWidth - 21
-	if nameWidth < 10 {
-		nameWidth = 10
+	if nameWidth < 8 {
+		nameWidth = 8
 	}
 	hdr := dimStyle.Render(fmt.Sprintf("  ST  %-7s %-*s %-6s", "TIPE", nameWidth, "NAMA", "PORT"))
 	rows = append(rows, hdr)
@@ -956,7 +1072,31 @@ func (m model) viewTunnelTable(inner int) string {
 	} else if len(vis) == 0 {
 		rows = append(rows, dimStyle.Render(fmt.Sprintf("Tidak ada tunnel cocok %q. Tekan esc untuk reset.", m.filterQuery)))
 	} else {
-		for displayIdx, origIdx := range vis {
+		limit := len(vis)
+		if len(maxRows) > 0 && maxRows[0] > 0 {
+			limit = maxRows[0]
+		}
+		start := 0
+		if len(vis) > limit {
+			start = m.cursor - limit/2
+			if start < 0 {
+				start = 0
+			}
+			if start+limit > len(vis) {
+				start = len(vis) - limit
+				if start < 0 {
+					start = 0
+				}
+			}
+			end := start + limit
+			if end > len(vis) {
+				end = len(vis)
+			}
+			vis = vis[start:end]
+		}
+
+		for i, origIdx := range vis {
+			actualVisIdx := start + i
 			t := m.cfg.Tunnels[origIdx]
 			var snap tunnel.Snapshot
 			if m.mgr != nil {
@@ -970,7 +1110,7 @@ func (m model) viewTunnelTable(inner int) string {
 				dot = dimStyle.Render("○")
 			}
 			marker := " "
-			if displayIdx == m.cursor {
+			if actualVisIdx == m.cursor {
 				marker = "►"
 			}
 			typBadge := "[LOCAL]"
@@ -984,7 +1124,7 @@ func (m model) viewTunnelTable(inner int) string {
 			}
 			nameStr := truncate(t.Name, nameWidth)
 			line := fmt.Sprintf("%s %s %s %-*s %-6s %s", marker, dot, typBadge, nameWidth, nameStr, portStr, dimStyle.Render(auto))
-			if displayIdx == m.cursor {
+			if actualVisIdx == m.cursor {
 				line = selStyle.Width(contentWidth).Render(fmt.Sprintf("%s %s %s %-*s %-6s %s", marker, dot, typBadge, nameWidth, nameStr, portStr, auto))
 			}
 			rows = append(rows, line)
@@ -995,19 +1135,22 @@ func (m model) viewTunnelTable(inner int) string {
 
 func (m model) viewSplit(w, inner int) string {
 	wLeft := (w * 45) / 100
-	innerLeft := wLeft - 4
-	if innerLeft < 34 {
-		innerLeft = 34
-		wLeft = innerLeft + 4
+	if wLeft < 38 {
+		wLeft = 38
 	}
 	wRight := w - wLeft - 1
-	innerRight := wRight - 4
-	if innerRight < 40 {
-		innerRight = 40
+	if wRight < 44 {
+		wRight = 44
 	}
 
-	leftBox := m.viewTunnelTable(innerLeft)
+	avail := m.usableBodyHeight()
+	maxTableRows := avail - 5
+	if maxTableRows < 2 {
+		maxTableRows = 2
+	}
+	leftBox := m.viewTunnelTable(wLeft, maxTableRows)
 
+	compactInsp := avail < 18
 	var rightCol string
 	if t, ok := m.selected(); ok {
 		var snap tunnel.Snapshot
@@ -1018,12 +1161,12 @@ func (m model) viewSplit(w, inner int) string {
 				logs = snap.Logs
 			}
 		}
-		insp := m.viewInspector(t, snap, innerRight)
-		logPane := m.viewLogPane(t, logs, innerRight, m.logHeight())
+		insp := m.viewInspector(t, snap, wRight, compactInsp)
+		logPane := m.viewLogPane(t, logs, wRight, m.logHeight())
 		rightCol = lipgloss.JoinVertical(lipgloss.Left, insp, logPane)
 	} else {
-		placeholder := boxStyle.Width(innerRight).Render(dimStyle.Render("Belum ada tunnel yang dipilih."))
-		emptyLog := boxStyle.Width(innerRight).Render(dimStyle.Render("(belum ada log)"))
+		placeholder := boxStyle.Width(wRight).Render(dimStyle.Render("Belum ada tunnel yang dipilih."))
+		emptyLog := boxStyle.Width(wRight).Render(dimStyle.Render("(belum ada log)"))
 		rightCol = lipgloss.JoinVertical(lipgloss.Left, placeholder, emptyLog)
 	}
 
@@ -1031,14 +1174,13 @@ func (m model) viewSplit(w, inner int) string {
 }
 
 func viewSplit(w, inner int) string {
-	return model{width: w}.viewSplit(w, inner)
+	return model{width: w, height: 28}.viewSplit(w, inner)
 }
 
 func (m model) viewStacked(w, inner int) string {
-	var parts []string
-	tableBox := m.viewTunnelTable(inner)
-	parts = append(parts, tableBox)
+	avail := m.usableBodyHeight()
 
+	var parts []string
 	if t, ok := m.selected(); ok {
 		var snap tunnel.Snapshot
 		var logs []string
@@ -1048,10 +1190,33 @@ func (m model) viewStacked(w, inner int) string {
 				logs = snap.Logs
 			}
 		}
-		insp := m.viewInspector(t, snap, inner)
-		parts = append(parts, insp)
-		logPane := m.viewLogPane(t, logs, inner, m.logHeight())
-		parts = append(parts, logPane)
+
+		tableRows := 1
+		inspCompact := true
+		inspH := 8
+		tableH := 6
+
+		remForLogs := avail - tableH - inspH
+		if remForLogs >= 5 {
+			tableBox := m.viewTunnelTable(inner, tableRows)
+			parts = append(parts, tableBox)
+			insp := m.viewInspector(t, snap, inner, inspCompact)
+			parts = append(parts, insp)
+			logLinesCount := remForLogs - 3
+			logPane := m.viewLogPane(t, logs, inner, logLinesCount)
+			parts = append(parts, logPane)
+		} else if avail >= 14 {
+			tableBox := m.viewTunnelTable(inner, 2)
+			parts = append(parts, tableBox)
+			insp := m.viewInspector(t, snap, inner, inspCompact)
+			parts = append(parts, insp)
+		} else {
+			tableBox := m.viewTunnelTable(inner, 1)
+			parts = append(parts, tableBox)
+		}
+	} else {
+		tableBox := m.viewTunnelTable(inner, avail-5)
+		parts = append(parts, tableBox)
 	}
 	return strings.Join(parts, "\n")
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -356,3 +357,102 @@ func TestFormNewTunnelClearsFilter(t *testing.T) {
 		t.Errorf("expected selected tunnel to be NewTunnel, got %+v", sel)
 	}
 }
+
+func TestView_HeightConstraintWithLogs(t *testing.T) {
+	cfg := config.Config{
+		Tunnels: []config.TunnelCfg{
+			{Name: "LongLogTunnel", Host: "homelab", Type: "local", LocalPort: 8891, RemotePort: 20128},
+		},
+	}
+	mgr := tunnel.NewManager()
+	rt := mgr.Get("LongLogTunnel")
+	// simulate typical SSH stderr logs which are 100+ chars long
+	for i := 1; i <= 30; i++ {
+		rt.Write([]byte("2026/10/03 14:10:02 ssh -N -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 127.0.0.1:8891:localhost:20128 user@homelab.domain.my.id\n"))
+	}
+
+	m := New(cfg, "/cfg.toml", mgr).(model)
+	m.width = 110
+	m.height = 30
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	for idx, l := range lines {
+		t.Logf("%2d: %s", idx+1, l)
+	}
+	t.Logf("Total lines in View(): %d (m.height: %d)", len(lines), m.height)
+	if len(lines) > m.height {
+		t.Errorf("View() height (%d lines) exceeded terminal height (%d lines)!", len(lines), m.height)
+	}
+}
+
+func TestView_HeightConstraintVariations(t *testing.T) {
+	cfg := config.Config{
+		Tunnels: []config.TunnelCfg{
+			{Name: "LongLogTunnel", Host: "homelab", Type: "local", LocalPort: 8891, RemotePort: 20128},
+		},
+	}
+	mgr := tunnel.NewManager()
+	rt := mgr.Get("LongLogTunnel")
+	for i := 1; i <= 50; i++ {
+		rt.Write([]byte("2026/10/03 14:10:02 ssh -N -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 127.0.0.1:8891:localhost:20128 user@homelab.domain.my.id\n"))
+	}
+
+	testCases := []struct {
+		name   string
+		width  int
+		height int
+	}{
+		{"Split standard 24 lines", 110, 24},
+		{"Split compact 20 lines", 110, 20},
+		{"Split large 40 lines", 120, 40},
+		{"Stacked standard 24 lines", 75, 24},
+		{"Stacked 30 lines", 75, 30},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New(cfg, "/cfg.toml", mgr).(model)
+			m.width = tc.width
+			m.height = tc.height
+
+			view := m.View()
+			lines := strings.Split(view, "\n")
+			if len(lines) > m.height {
+				t.Errorf("%s: View() height (%d lines) exceeded terminal height (%d lines)!", tc.name, len(lines), m.height)
+			}
+		})
+	}
+}
+
+func TestView_ManyTunnelsWindowing(t *testing.T) {
+	var tunnels []config.TunnelCfg
+	for i := 1; i <= 35; i++ {
+		tunnels = append(tunnels, config.TunnelCfg{
+			Name:       fmt.Sprintf("Tunnel-%02d", i),
+			Host:       "remote-server",
+			Type:       "local",
+			LocalPort:  8000 + i,
+			RemotePort: 9000 + i,
+		})
+	}
+	cfg := config.Config{Tunnels: tunnels}
+	mgr := tunnel.NewManager()
+
+	m := New(cfg, "/cfg.toml", mgr).(model)
+	m.width = 110
+	m.height = 24
+	m.cursor = 25 // cursor scrolled down into the middle
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > m.height {
+		t.Errorf("View() height with 35 tunnels (%d lines) exceeded terminal height (%d lines)!", len(lines), m.height)
+	}
+
+	// Active tunnel at cursor should be highlighted
+	if !strings.Contains(view, "Tunnel-26") {
+		t.Errorf("expected selected Tunnel-26 to be visible in windowed view")
+	}
+}
+
