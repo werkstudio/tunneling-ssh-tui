@@ -170,22 +170,130 @@ type model struct {
 	confirm string
 	picker  []detect.Port
 	pickCur int
+
+	filterInput textinput.Model
+	filtering   bool
+	filterQuery string
+	showHelp    bool
+	logScroll   int
 }
 
 // New membuat model TUI.
 func New(cfg config.Config, path string, mgr *tunnel.Manager) tea.Model {
-	return model{cfg: cfg, path: path, mgr: mgr, width: 100, height: 30}
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.Placeholder = "cari nama, host, tipe, port..."
+	ti.CharLimit = 50
+	return model{
+		cfg:         cfg,
+		path:        path,
+		mgr:         mgr,
+		width:       100,
+		height:      30,
+		filterInput: ti,
+	}
 }
 
 func (m model) Init() tea.Cmd { return tick() }
 
 func (m *model) flash(s string, isErr bool) { m.msg, m.msgErr = s, isErr }
 
+func (m *model) initFilterInput() {
+	if m.filterInput.Prompt == "" {
+		ti := textinput.New()
+		ti.Prompt = "/ "
+		ti.Placeholder = "cari nama, host, tipe, port..."
+		ti.CharLimit = 50
+		m.filterInput = ti
+	}
+}
+
+func matchTunnel(t config.TunnelCfg, query string) bool {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(t.Name), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(t.Host), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(t.Type), q) {
+		return true
+	}
+	if t.LocalPort > 0 && strings.Contains(strconv.Itoa(t.LocalPort), q) {
+		return true
+	}
+	if t.RemotePort > 0 && strings.Contains(strconv.Itoa(t.RemotePort), q) {
+		return true
+	}
+	return false
+}
+
+// visibleTunnels mengembalikan daftar tunnel yang cocok dengan filterQuery.
+func (m model) visibleTunnels() []config.TunnelCfg {
+	var res []config.TunnelCfg
+	for _, idx := range m.visibleIndices() {
+		res = append(res, m.cfg.Tunnels[idx])
+	}
+	return res
+}
+
+// visibleIndices mengembalikan indeks tunnel di m.cfg.Tunnels yang cocok dengan filterQuery.
+func (m model) visibleIndices() []int {
+	var indices []int
+	for i, t := range m.cfg.Tunnels {
+		if matchTunnel(t, m.filterQuery) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func (m *model) selectedIndex() int {
+	vis := m.visibleIndices()
+	if len(vis) == 0 || m.cursor < 0 || m.cursor >= len(vis) {
+		return -1
+	}
+	return vis[m.cursor]
+}
+
 func (m *model) selected() (config.TunnelCfg, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.cfg.Tunnels) {
+	idx := m.selectedIndex()
+	if idx < 0 || idx >= len(m.cfg.Tunnels) {
 		return config.TunnelCfg{}, false
 	}
-	return m.cfg.Tunnels[m.cursor], true
+	return m.cfg.Tunnels[idx], true
+}
+
+func (m *model) clampLogScroll() {
+	if m.mgr != nil {
+		if t, ok := m.selected(); ok {
+			rt := m.mgr.Get(t.Name)
+			if rt != nil {
+				snap := rt.Snapshot()
+				visCount := len(m.visibleIndices())
+				n := m.height - visCount - 12
+				if m.filtering || m.filterQuery != "" {
+					n -= 2
+				}
+				if n < 4 {
+					n = 4
+				}
+				maxScroll := len(snap.Logs) - n
+				if maxScroll < 0 {
+					maxScroll = 0
+				}
+				if m.logScroll > maxScroll {
+					m.logScroll = maxScroll
+				}
+			}
+		}
+	}
+	if m.logScroll < 0 {
+		m.logScroll = 0
+	}
 }
 
 func (m *model) save() {
@@ -195,6 +303,9 @@ func (m *model) save() {
 }
 
 func (m *model) toggleTunnel(t config.TunnelCfg) {
+	if m.mgr == nil {
+		return
+	}
 	rt := m.mgr.Get(t.Name)
 	if rt.Active() {
 		go rt.Stop()
@@ -233,6 +344,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modePicker
 		return m, nil
 	case tea.KeyMsg:
+		if m.showHelp {
+			switch msg.String() {
+			case "ctrl+c":
+				if m.mgr != nil {
+					m.mgr.StopAll()
+				}
+				return m, tea.Quit
+			case "esc", "?", "enter", "q", " ":
+				m.showHelp = false
+				return m, nil
+			}
+			return m, nil
+		}
 		switch m.mode {
 		case modeForm:
 			return m.updateForm(msg)
@@ -241,10 +365,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeConfirm:
 			if msg.String() == "y" {
 				if t, ok := m.selected(); ok {
-					go m.mgr.StopTunnel(t.Name)
-					m.mgr.Forget(t.Name)
-					m.cfg.Tunnels = append(m.cfg.Tunnels[:m.cursor], m.cfg.Tunnels[m.cursor+1:]...)
-					if m.cursor >= len(m.cfg.Tunnels) && m.cursor > 0 {
+					idx := m.selectedIndex()
+					if m.mgr != nil {
+						go m.mgr.StopTunnel(t.Name)
+						m.mgr.Forget(t.Name)
+					}
+					if idx >= 0 && idx < len(m.cfg.Tunnels) {
+						m.cfg.Tunnels = append(m.cfg.Tunnels[:idx], m.cfg.Tunnels[idx+1:]...)
+					}
+					vis := m.visibleIndices()
+					if m.cursor >= len(vis) && m.cursor > 0 {
 						m.cursor--
 					}
 					m.save()
@@ -253,32 +383,110 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.mode = modeList
 		default:
+			if m.filtering {
+				return m.updateFilter(msg)
+			}
 			return m.updateList(msg)
 		}
 	}
 	return m, nil
 }
 
+func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		if m.mgr != nil {
+			m.mgr.StopAll()
+		}
+		return m, tea.Quit
+	case "esc":
+		m.filtering = false
+		m.filterInput.Blur()
+		return m, nil
+	case "enter":
+		m.filtering = false
+		m.filterInput.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	m.filterQuery = m.filterInput.Value()
+	visLen := len(m.visibleIndices())
+	if visLen == 0 {
+		m.cursor = 0
+	} else if m.cursor >= visLen {
+		m.cursor = visLen - 1
+	}
+	m.logScroll = 0
+	return m, cmd
+}
+
 func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	t, has := m.selected()
 	switch msg.String() {
 	case "ctrl+c", "q":
-		m.mgr.StopAll()
+		if m.mgr != nil {
+			m.mgr.StopAll()
+		}
 		return m, tea.Quit
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
+			m.logScroll = 0
 		}
 	case "down", "j":
-		if m.cursor < len(m.cfg.Tunnels)-1 {
+		visLen := len(m.visibleIndices())
+		if visLen > 0 && m.cursor < visLen-1 {
 			m.cursor++
+			m.logScroll = 0
+		}
+	case "pgup":
+		m.logScroll += 5
+		m.clampLogScroll()
+	case "pgdown":
+		m.logScroll -= 5
+		if m.logScroll < 0 {
+			m.logScroll = 0
+		}
+	case "K":
+		m.logScroll++
+		m.clampLogScroll()
+	case "J":
+		if m.logScroll > 0 {
+			m.logScroll--
+		}
+	case "/":
+		m.filtering = true
+		m.initFilterInput()
+		m.filterInput.SetValue(m.filterQuery)
+		cmd := m.filterInput.Focus()
+		return m, cmd
+	case "esc":
+		if m.filterQuery != "" {
+			m.filterQuery = ""
+			m.filterInput.SetValue("")
+			m.cursor = 0
+			m.logScroll = 0
+			return m, nil
+		}
+	case "?":
+		m.showHelp = !m.showHelp
+		return m, nil
+	case "c":
+		if has {
+			url := fmt.Sprintf("http://localhost:%d", t.LocalPort)
+			if err := copyToClipboard(url); err != nil {
+				m.flash("gagal menyalin ke clipboard: "+err.Error(), true)
+			} else {
+				m.flash(fmt.Sprintf("disalin ke clipboard: %s", url), false)
+			}
 		}
 	case "enter", " ":
 		if has {
 			m.toggleTunnel(t)
 		}
 	case "r":
-		if has {
+		if has && m.mgr != nil {
 			rt := m.mgr.Get(t.Name)
 			cfg := m.cfg
 			go func() {
@@ -288,15 +496,19 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.flash("restart "+t.Name, false)
 		}
 	case "a":
-		for _, t := range m.cfg.Tunnels {
-			if !m.mgr.Get(t.Name).Active() {
-				m.mgr.StartTunnel(m.cfg, t)
+		if m.mgr != nil {
+			for _, t := range m.cfg.Tunnels {
+				if !m.mgr.Get(t.Name).Active() {
+					m.mgr.StartTunnel(m.cfg, t)
+				}
 			}
 		}
 		m.flash("semua tunnel dimulai", false)
 	case "x":
-		for _, t := range m.cfg.Tunnels {
-			go m.mgr.StopTunnel(t.Name)
+		if m.mgr != nil {
+			for _, t := range m.cfg.Tunnels {
+				go m.mgr.StopTunnel(t.Name)
+			}
 		}
 		m.flash("semua tunnel dihentikan", false)
 	case "o":
@@ -308,7 +520,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.form, m.mode = newForm(config.TunnelCfg{RemoteHost: "localhost"}, -1), modeForm
 	case "e":
 		if has {
-			m.form, m.mode = newForm(t, m.cursor), modeForm
+			m.form, m.mode = newForm(t, m.selectedIndex()), modeForm
 		}
 	case "d":
 		if has {
@@ -454,6 +666,10 @@ func help(pairs ...string) string {
 }
 
 func (m model) View() string {
+	if m.showHelp {
+		return viewHelpModal(m.width, m.height)
+	}
+
 	w := m.width
 	if w < 60 {
 		w = 60
@@ -472,36 +688,57 @@ func (m model) View() string {
 		return b.String()
 	}
 
+	// filter input
+	if m.filtering || m.filterQuery != "" {
+		var fView string
+		if m.filtering {
+			fView = m.filterInput.View()
+		} else {
+			fView = dimStyle.Render("Filter: ") + keyStyle.Render(m.filterQuery) + dimStyle.Render("  (tekan / untuk cari, esc untuk reset)")
+		}
+		b.WriteString(boxStyle.Width(w-2).Render(fView) + "\n")
+	}
+
 	// daftar tunnel
 	var rows []string
+	vis := m.visibleIndices()
 	if len(m.cfg.Tunnels) == 0 {
 		rows = append(rows, dimStyle.Render("Belum ada tunnel. Tekan n untuk menambah."))
-	}
-	for i, t := range m.cfg.Tunnels {
-		snap := m.mgr.Get(t.Name).Snapshot()
-		st, up := snap.Status, snap.Uptime
-		dot := statusStyle[st].Render("●")
-		route := fmt.Sprintf("localhost:%d → %s:%d", t.LocalPort, t.Host, t.RemotePort)
-		if t.Type == "reverse" {
-			route = fmt.Sprintf("%s:%d → localhost:%d", t.Host, t.RemotePort, t.LocalPort)
+	} else if len(vis) == 0 {
+		rows = append(rows, dimStyle.Render(fmt.Sprintf("Tidak ada tunnel cocok dengan %q. Tekan esc untuk reset.", m.filterQuery)))
+	} else {
+		for displayIdx, origIdx := range vis {
+			t := m.cfg.Tunnels[origIdx]
+			var snap tunnel.Snapshot
+			if m.mgr != nil {
+				if rt := m.mgr.Get(t.Name); rt != nil {
+					snap = rt.Snapshot()
+				}
+			}
+			st, up := snap.Status, snap.Uptime
+			dot := statusStyle[st].Render("●")
+			route := fmt.Sprintf("localhost:%d → %s:%d", t.LocalPort, t.Host, t.RemotePort)
+			if t.Type == "reverse" {
+				route = fmt.Sprintf("%s:%d → localhost:%d", t.Host, t.RemotePort, t.LocalPort)
+			}
+			info := st.String()
+			if st == tunnel.Running {
+				info += " " + fmtDur(up)
+			}
+			auto := " "
+			if t.Autostart {
+				auto = "↻"
+			}
+			name := lipgloss.NewStyle().Width(20).Render(truncate(t.Name, 19))
+			typ := lipgloss.NewStyle().Width(8).Render(t.Type)
+			rt := lipgloss.NewStyle().Width(inner - 20 - 8 - 22 - 6).Render(truncate(route, inner-20-8-22-7))
+			stTxt := statusStyle[st].Width(18).Render(info)
+			line := fmt.Sprintf("%s %s %s%s %s %s", dot, name, typ, rt, stTxt, dimStyle.Render(auto))
+			if displayIdx == m.cursor {
+				line = selStyle.Width(inner).Render(fmt.Sprintf("%s %s %s%s %s %s", dot, name, typ, rt, stTxt, auto))
+			}
+			rows = append(rows, line)
 		}
-		info := st.String()
-		if st == tunnel.Running {
-			info += " " + fmtDur(up)
-		}
-		auto := " "
-		if t.Autostart {
-			auto = "↻"
-		}
-		name := lipgloss.NewStyle().Width(20).Render(truncate(t.Name, 19))
-		typ := lipgloss.NewStyle().Width(8).Render(t.Type)
-		rt := lipgloss.NewStyle().Width(inner - 20 - 8 - 22 - 6).Render(truncate(route, inner-20-8-22-7))
-		stTxt := statusStyle[st].Width(18).Render(info)
-		line := fmt.Sprintf("%s %s %s%s %s %s", dot, name, typ, rt, stTxt, dimStyle.Render(auto))
-		if i == m.cursor {
-			line = selStyle.Width(inner).Render(fmt.Sprintf("%s %s %s%s %s %s", dot, name, typ, rt, stTxt, auto))
-		}
-		rows = append(rows, line)
 	}
 	b.WriteString(boxStyle.Width(w-2).Render(strings.Join(rows, "\n")) + "\n")
 
@@ -510,17 +747,44 @@ func (m model) View() string {
 	var logLines []string
 	if t, ok := m.selected(); ok {
 		logTitle = "Log — " + t.Name
-		snap := m.mgr.Get(t.Name).Snapshot()
-		logs := snap.Logs
-		n := m.height - len(m.cfg.Tunnels) - 12
+		if m.logScroll > 0 {
+			logTitle += fmt.Sprintf(" [▲ %d]", m.logScroll)
+		}
+		var logs []string
+		if m.mgr != nil {
+			if rt := m.mgr.Get(t.Name); rt != nil {
+				logs = rt.Snapshot().Logs
+			}
+		}
+		visCount := len(vis)
+		n := m.height - visCount - 12
+		if m.filtering || m.filterQuery != "" {
+			n -= 2
+		}
 		if n < 4 {
 			n = 4
 		}
-		if len(logs) > n {
-			logs = logs[len(logs)-n:]
-		}
-		for _, l := range logs {
-			logLines = append(logLines, dimStyle.Render(truncate(l, inner)))
+		if len(logs) > 0 {
+			totalLogs := len(logs)
+			if totalLogs > n {
+				maxScroll := totalLogs - n
+				scroll := m.logScroll
+				if scroll > maxScroll {
+					scroll = maxScroll
+				}
+				if scroll < 0 {
+					scroll = 0
+				}
+				end := totalLogs - scroll
+				start := end - n
+				if start < 0 {
+					start = 0
+				}
+				logs = logs[start:end]
+			}
+			for _, l := range logs {
+				logLines = append(logLines, dimStyle.Render(truncate(l, inner)))
+			}
 		}
 	}
 	if len(logLines) == 0 {
@@ -533,6 +797,8 @@ func (m model) View() string {
 	case m.mode == modeConfirm:
 		t, _ := m.selected()
 		b.WriteString(errStyle.Render(fmt.Sprintf("Hapus tunnel %q? ", t.Name)) + help("y", "ya", "lain", "batal"))
+	case m.filtering:
+		b.WriteString(help("enter", "selesai filter", "esc", "batal filter", "ctrl+c", "keluar"))
 	default:
 		if m.msg != "" {
 			st := okStyle
@@ -541,7 +807,7 @@ func (m model) View() string {
 			}
 			b.WriteString(st.Render(m.msg) + "\n")
 		}
-		b.WriteString(help("↑↓", "pilih", "enter", "start/stop", "r", "restart", "a/x", "semua", "o", "buka", "n/e/d", "baru/edit/hapus", "q", "keluar"))
+		b.WriteString(help("↑↓", "pilih", "/", "filter", "enter", "start/stop", "c", "salin", "?", "bantuan", "n/e/d", "kelola", "q", "keluar"))
 	}
 	return b.String()
 }
