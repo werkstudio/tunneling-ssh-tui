@@ -737,7 +737,7 @@ func (m model) viewHeader(w int) string {
 	pill := fmt.Sprintf("[ %s  ·  %s  ·  %s ]", pillAktif, pillBerhenti, pillErr)
 
 	displayPath := m.path
-	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(displayPath, home) {
+	if home, err := os.UserHomeDir(); err == nil && home != "" && (displayPath == home || strings.HasPrefix(displayPath, home+string(os.PathSeparator))) {
 		displayPath = "~" + strings.TrimPrefix(displayPath, home)
 	}
 
