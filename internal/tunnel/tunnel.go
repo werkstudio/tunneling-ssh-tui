@@ -26,18 +26,33 @@ func (s Status) String() string {
 	return [...]string{"stopped", "starting", "running", "reconnecting", "error"}[s]
 }
 
+type Snapshot struct {
+	Status     Status
+	Uptime     time.Duration
+	Logs       []string
+	LastError  string
+	RetryIn    time.Duration
+	RetryCount int
+	LocalBound bool
+	LatencyRTT time.Duration
+	LatencyErr error
+}
+
 const maxLogLines = 200
 
 // Runtime mengelola satu proses ssh -N beserta auto-reconnect.
 type Runtime struct {
-	mu      sync.Mutex
-	status  Status
-	since   time.Time // kapan masuk status Running
-	logs    []string
-	cancel  context.CancelFunc
-	done    chan struct{}
-	Echo    func(string) // opsional, dipakai mode CLI
-	partial string
+	mu          sync.Mutex
+	status      Status
+	since       time.Time // kapan masuk status Running
+	logs        []string
+	cancel      context.CancelFunc
+	done        chan struct{}
+	Echo        func(string) // opsional, dipakai mode CLI
+	partial     string
+	lastError   string
+	retryCount  int
+	nextRetryAt time.Time
 }
 
 func (r *Runtime) logf(format string, a ...any) {
@@ -63,6 +78,9 @@ func (r *Runtime) Write(p []byte) (int, error) {
 	r.mu.Unlock()
 	for _, l := range lines[:len(lines)-1] {
 		if l = strings.TrimSpace(l); l != "" {
+			r.mu.Lock()
+			r.lastError = l
+			r.mu.Unlock()
 			r.logf("ssh: %s", l)
 		}
 	}
@@ -78,14 +96,28 @@ func (r *Runtime) setStatus(s Status) {
 	r.mu.Unlock()
 }
 
-func (r *Runtime) Snapshot() (Status, time.Duration, []string) {
+func (r *Runtime) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var up time.Duration
 	if r.status == Running {
 		up = time.Since(r.since)
 	}
-	return r.status, up, append([]string(nil), r.logs...)
+	var retryIn time.Duration
+	if !r.nextRetryAt.IsZero() {
+		rem := time.Until(r.nextRetryAt)
+		if rem > 0 {
+			retryIn = rem
+		}
+	}
+	return Snapshot{
+		Status:     r.status,
+		Uptime:     up,
+		Logs:       append([]string(nil), r.logs...),
+		LastError:  r.lastError,
+		RetryIn:    retryIn,
+		RetryCount: r.retryCount,
+	}
 }
 
 func (r *Runtime) Active() bool {
@@ -105,6 +137,9 @@ func (r *Runtime) Start(args []string, checkAddr string) {
 	r.cancel = cancel
 	r.done = make(chan struct{})
 	r.status = Starting
+	r.lastError = ""
+	r.retryCount = 0
+	r.nextRetryAt = time.Time{}
 	r.mu.Unlock()
 	go r.loop(ctx, args, checkAddr)
 }
@@ -128,6 +163,7 @@ func (r *Runtime) finish(s Status) {
 	r.mu.Lock()
 	r.status = s
 	r.cancel = nil
+	r.nextRetryAt = time.Time{}
 	done := r.done
 	r.mu.Unlock()
 	close(done)
@@ -137,6 +173,9 @@ func (r *Runtime) loop(ctx context.Context, args []string, checkAddr string) {
 	if checkAddr != "" {
 		l, err := net.Listen("tcp", checkAddr)
 		if err != nil {
+			r.mu.Lock()
+			r.lastError = fmt.Sprintf("port %s sudah dipakai proses lain", checkAddr)
+			r.mu.Unlock()
 			r.logf("port %s sudah dipakai proses lain", checkAddr)
 			r.finish(Failed)
 			return
@@ -156,6 +195,9 @@ func (r *Runtime) loop(ctx context.Context, args []string, checkAddr string) {
 		cmd := exec.CommandContext(ctx, "ssh", args...)
 		cmd.Stderr = r
 		if err := cmd.Start(); err != nil {
+			r.mu.Lock()
+			r.lastError = err.Error()
+			r.mu.Unlock()
 			r.logf("gagal menjalankan ssh: %v", err)
 			r.finish(Failed)
 			return
@@ -170,6 +212,10 @@ func (r *Runtime) loop(ctx context.Context, args []string, checkAddr string) {
 		case <-time.After(2 * time.Second):
 			r.setStatus(Running)
 			r.logf("tunnel aktif")
+			r.mu.Lock()
+			r.retryCount = 0
+			r.lastError = ""
+			r.mu.Unlock()
 			err = <-exited
 		}
 		if ctx.Err() != nil {
@@ -179,12 +225,22 @@ func (r *Runtime) loop(ctx context.Context, args []string, checkAddr string) {
 		if time.Since(started) > 30*time.Second {
 			backoff = 2 * time.Second
 		}
+		r.mu.Lock()
+		r.retryCount++
+		r.nextRetryAt = time.Now().Add(backoff)
+		if err != nil && r.lastError == "" {
+			r.lastError = err.Error()
+		}
+		r.mu.Unlock()
 		r.setStatus(Reconnecting)
 		r.logf("mencoba lagi dalam %s", backoff)
 		select {
 		case <-ctx.Done():
 		case <-time.After(backoff):
 		}
+		r.mu.Lock()
+		r.nextRetryAt = time.Time{}
+		r.mu.Unlock()
 		if backoff *= 2; backoff > 30*time.Second {
 			backoff = 30 * time.Second
 		}
