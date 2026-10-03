@@ -1,126 +1,227 @@
-# sshtui
+# sshtui 🚀
 
-TUI modern dan intuitif untuk mengelola SSH tunnel (Go + Bubble Tea).
+> **TUI modern, informatif, dan intuitif untuk mengelola SSH Port Forwarding (Go + Bubble Tea).**
 
-## Fitur Utama
+`sshtui` menyederhanakan manajemen SSH tunnel (Local Forward `-L` dan Reverse Forward `-R`) dengan antarmuka terminal bergaya split-pane yang kaya telemetri koneksi, pemantauan latensi real-time, log live yang dapat di-scroll, dan pendeteksian port otomatis di server remote.
 
-- **Responsive Split-Pane Layout**: Tampilan dua panel berdampingan otomatis pada terminal lebar (≥ 110 kolom) dan tata letak vertikal adaptif pada terminal kompak.
-- **Connection Inspector**:
-  - Visual diagram alur rute koneksi (`Local <-> SSH Host <-> Remote Target`).
-  - Pemantauan latensi RTT host secara berkala via native Go TCP probe.
-  - Verifikasi status listening port lokal secara real-time.
-  - Informasi proses SSH (PID, uptime, jumlah reconnect, waktu start).
-- **Scrollable Live Logs**: Viewport log koneksi SSH real-time yang dapat di-scroll dengan indikator persentase.
-- **Pencarian & Filter Cepat**: Filter daftar tunnel secara instan hanya dengan menekan `/`.
-- **Integrasi Clipboard**: Salin URL lokal (`http://localhost:<port>`) ke clipboard dengan satu tombol (`c`).
-- **Deteksi Port Remote**: Deteksi port yang sedang listening di remote host (`ctrl+d`) lengkap dengan animasi spinner.
-- **Help Modal**: Akses cepat ke panduan tombol kapan saja dengan menekan `?`.
+---
 
-## Build & Jalankan
+## ✨ Fitur Unggulan
 
+- 🖥️ **Responsive Split-Pane Interface**:
+  - Otomatis menampilkan tampilan dua kolom berdampingan pada terminal lebar (≥ 110 kolom): kolom kiri untuk daftar tunnel & filter, kolom kanan untuk inspektor koneksi & live log.
+  - Beralih adaptif ke mode tumpuk vertikal (*graceful stacked fallback*) pada terminal yang lebih sempit (< 110 kolom).
+- 🔍 **Real-Time Connection Inspector**:
+  - **Diagram Alur Rute**: Menampilkan visual arah lalu lintas (`Local Port ──────► [SSH Server] ──────► Remote Target`).
+  - **Host Ping RTT Latency**: Memeriksa latensi TCP ke remote SSH server secara berkala dengan pewarnaan intuitif (<50ms hijau, 50-150ms cyan, 150-300ms kuning, >300ms oranye).
+  - **Local Listener Verification**: Memverifikasi secara riil apakah socket port lokal di komputer Anda sudah siap menerima koneksi aplikasi.
+  - **Proses & Lifecycle**: Melacak status proses (`RUNNING`, `STOPPED`, `RECONNECTING`, `ERROR`), uptime, countdown reconnect otomatis, dan detail error spesifik.
+- 📜 **Scrollable Live Logs**:
+  - Panel log stderr SSH langsung dengan viewport tersendiri.
+  - Navigasi scrolling keyboard (`PgUp`/`PgDn` atau `J`/`K`) dilengkapi indikator posisi persentase `[xx%]`.
+- ⚡ **Pencarian & Filter Instan (`/`)**:
+  - Filter cepat daftar tunnel berdasarkan nama atau host secara realtime tanpa jeda.
+- 📋 **Integrasi Clipboard Sistem (`c`)**:
+  - Salin URL lokal (`http://localhost:<port>`) langsung ke clipboard dengan satu tombol (mendukung macOS `pbcopy`, Linux `wl-copy`/`xclip`/`xsel`, dan Windows `clip.exe`).
+- 📡 **Deteksi Port Remote Otomatis (`ctrl+d`)**:
+  - Pindai port yang sedang listening di remote host lewat SSH (`ss -ltnp`, `netstat`, `lsof`) disertai animasi spinner braille halus (`⠋ ⠙ ⠹ ⠸`).
+- ❓ **Help Modal Popup (`?`)**:
+  - Cheatsheet tombol pintasan interaktif yang bisa dimunculkan dan ditutup kapan saja.
+
+---
+
+## 📸 Tampilan Visual
+
+### 1. Split-Pane Layout (Lebar Terminal ≥ 110 Kolom)
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ sshtui SSH tunnel manager         [ ● 2 Aktif  ·  ○ 1 Berhenti  ·  ▲ 0 Error ]     ~/.config/... │
+├───────────────────────────────────┬──────────────────────────────────────────────────────────────┤
+│ DAFTAR TUNNEL (/ filter)          │ INSPEKTOR KONEKSI: DMS Mazda                                 │
+│                                   │                                                              │
+│ ► ● [LOCAL] DMS Mazda             │ Rute Koneksi:                                                │
+│     127.0.0.1:8891                │ 127.0.0.1:8891  ──────►  [homelab:22]  ──────►  local:20128  │
+│     homelab (28ms)          ↻     │                                                              │
+│                                   │ Latensi Host  : 28ms (homelab.arry.my.id:22)                 │
+│   ● [LOCAL] Postgres Staging      │ Port Lokal    : 127.0.0.1:8891 (Listening ●)                 │
+│     127.0.0.1:5433                │ Status Proses : Berjalan normal (Uptime: 18m 42s)            │
+│     homelab (28ms)                │ Kredensial    : user: arry | key: ~/.ssh/id_ed25519          │
+│                                   ├──────────────────────────────────────────────────────────────┤
+│   ○ [REV]   Webhook Test          │ LIVE LOGS (DMS Mazda)               [PgUp/PgDn scroll 100%] │
+│     127.0.0.1:3000                │ 14:10:02 [DMS Mazda] connected to homelab.arry.my.id         │
+│     vps-sg                        │ 14:10:03 [DMS Mazda] local forwarding listening on :8891     │
+├───────────────────────────────────┴──────────────────────────────────────────────────────────────┤
+│ enter/space start/stop · / filter · c copy url · o browser · ? bantuan · q keluar                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. Modal Bantuan Pintasan (`?`)
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                     [ BANTUAN PINTASAN SSHTUI ]                 │
+│                                                                 │
+│   ↑ / ↓ atau j / k        Navigasi daftar tunnel                │
+│   enter / space           Start / stop tunnel terpilih          │
+│   r                       Restart proses tunnel                 │
+│   a / x                   Start semua / stop semua              │
+│   /                       Filter / cari nama & host             │
+│   c                       Salin URL ke clipboard                │
+│   o                       Buka URL di web browser               │
+│   PgUp / PgDn (J / K)     Scroll viewport log                   │
+│   n / e / d               Tambah / edit / hapus tunnel          │
+│   ctrl+d (di form)        Deteksi port remote via SSH           │
+│   q                       Keluar aplikasi                       │
+│                                                                 │
+│                 Tekan '?' atau 'esc' untuk menutup              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🛠️ Instalasi & Menjalankan
+
+### Kebutuhan:
+- Go 1.22 atau lebih baru.
+- OpenSSH client (`ssh`).
+- macOS, Linux, atau Windows (dengan WSL/terminal modern).
+
+### Build dari Sumber:
 ```bash
-make build && ./bin/sshtui
-make install    # salin ke ~/.local/bin
-make test
+git clone https://github.com/username/sshtui.git
+cd sshtui
+
+# Kompilasi binary
+make build
+
+# Jalankan langsung
+./bin/sshtui
+
+# Pasang ke ~/.local/bin agar dapat dipanggil dari mana saja
+make install
 ```
 
-## Struktur Proyek
+---
 
-```
-cmd/sshtui/        entrypoint + CLI (list, scan, up, path)
-internal/config/   load/save TOML, penyusun argumen ssh
-internal/tunnel/   manager proses ssh -N + telemetri & health engine
-internal/detect/   deteksi port listen di server (ss / netstat / lsof)
-internal/tui/      antarmuka Bubble Tea responsif & modal komponen
-```
+## ⚙️ Konfigurasi
 
-## Konfigurasi
+Lokasi konfigurasi default:
+- `~/.config/sshtui/config.toml` (dapat di-override via environment variable `SSHTUI_CONFIG`).
 
-Lokasi konfigurasi default: `~/.config/sshtui/config.toml` (dapat di-override menggunakan environment variable `SSHTUI_CONFIG`).
+### Contoh File `config.toml`:
 
 ```toml
+# Definisi Host Remote (Opsional jika sudah ada di ~/.ssh/config)
 [host.homelab]
 address = "homelab.arry.my.id"
 user = "arry"
 port = 22
 key = "~/.ssh/id_ed25519"   # opsional
 
+[host.vps-sg]
+address = "139.180.200.10"
+user = "root"
+port = 2222
+
+# Definisi Tunnel
 [[tunnel]]
 name = "DMS Mazda"
 host = "homelab"        # alias [host.*], alias ~/.ssh/config, atau user@host
 type = "local"          # local (-L) | reverse (-R)
+bind = "127.0.0.1"      # kosong = 127.0.0.1
 local_port = 8891
 remote_host = "localhost"
 remote_port = 20128
+autostart = true
+
+[[tunnel]]
+name = "Postgres Staging"
+host = "homelab"
+type = "local"
+local_port = 5433
+remote_host = "10.0.0.15"
+remote_port = 5432
+autostart = false
+
+[[tunnel]]
+name = "Webhook Test"
+host = "vps-sg"
+type = "reverse"        # remote port di-forward ke port lokal kita
+local_port = 3000
+remote_port = 8080
 autostart = false
 ```
 
-## Tombol Pintasan (Keybindings)
+---
+
+## ⌨️ Daftar Tombol Pintasan (Keybindings)
 
 ### Navigasi & Kontrol Utama
-
 | Tombol | Fungsi |
 |---|---|
-| `↑` `↓` / `j` `k` | Pilih tunnel dalam daftar |
-| `enter` / `space` | Start / Stop tunnel terpilih |
-| `r` | Restart proses tunnel terpilih |
-| `a` / `x` | Start semua / Stop semua tunnel |
-| `/` | Buka filter / pencarian instan nama & host (`esc` untuk batal/reset) |
-| `c` | Salin URL tunnel (`http://localhost:<port>`) ke clipboard sistem |
-| `o` | Buka `http://localhost:<port>` di browser default |
-| `?` | Tampilkan / sembunyikan modal bantuan pintasan |
-| `PgUp` / `PgDn` (atau `J` / `K`) | Scroll viewport log inspeksi koneksi ke atas / ke bawah |
-| `n` / `e` / `d` | Tambah / Edit / Hapus tunnel |
-| `q` | Keluar dari aplikasi (semua tunnel otomatis dimatikan) |
+| `↑` `↓` / `j` `k` | Pindah kursor pilihan tunnel |
+| `enter` / `space` | Jalankan (Start) atau Hentikan (Stop) tunnel terpilih |
+| `r` | Restart tunnel terpilih |
+| `a` / `x` | Start semua tunnel / Stop semua tunnel |
+| `/` | Buka bar pencarian / filter instan (`esc` untuk batal) |
+| `c` | Salin URL (`http://localhost:<port>`) ke clipboard sistem |
+| `o` | Buka URL di browser web bawaan |
+| `?` | Buka / tutup modal bantuan pintasan |
+| `PgUp` / `PgDn` (atau `J` / `K`) | Gulir riwayat log di panel kanan |
+| `n` | Tambah tunnel baru |
+| `e` | Edit tunnel terpilih |
+| `d` | Hapus tunnel terpilih (dengan konfirmasi) |
+| `q` atau `ctrl+c` | Keluar dari aplikasi (semua tunnel otomatis dimatikan) |
 
-### Formulir & Deteksi Port
-
+### Formulir Tambah / Edit Tunnel
 | Tombol | Fungsi |
 |---|---|
 | `tab` / `shift+tab` | Pindah ke field berikutnya / sebelumnya |
-| `space` / `←` `→` | Ubah pilihan opsi toggle (tipe tunnel / autostart) |
-| `ctrl+d` | **Deteksi port remote** di server via SSH (disertai animasi spinner) |
-| `ctrl+s` | Simpan perubahan konfigurasi tunnel |
-| `esc` | Batal / tutup formulir |
+| `space` / `←` `→` | Ubah pilihan opsi toggle (Tipe / Autostart) |
+| `ctrl+d` | **Deteksi port remote** di server via SSH otomatis |
+| `ctrl+s` | Simpan konfigurasi |
+| `esc` | Batal dan kembali ke daftar utama |
 
-## Split-Pane Layout & Inspeksi Koneksi
+---
 
-sshtui mengadopsi antarmuka modern yang secara cerdas menyesuaikan dengan dimensi terminal Anda:
+## 💻 Penggunaan Mode CLI (Headless)
 
-1. **Panel Kiri (Tunnel List)**:
-   - Menampilkan status setiap tunnel:
-     - `● RUNNING` (hijau)
-     - `○ STOPPED` (abu-abu)
-     - `▲ ERROR` (merah)
-     - `⏳ STARTING` (kuning)
-   - Indikator latensi ping RTT ke host server.
-   - Indikator autostart, binding port lokal, dan target remote.
+Selain antarmuka TUI interaktif, `sshtui` juga menyediakan subkomando CLI:
 
-2. **Panel Kanan (Connection Inspector & Logs)**:
-   - **Diagram Alur Rute**: Menunjukkan visual alur koneksi:
-     - Local (-L): `127.0.0.1:8891 ──────► [homelab:22] ──────► localhost:20128`
-     - Reverse (-R): `127.0.0.1:20128 ◄────── [homelab:22] ◄────── 127.0.0.1:8891`
-   - **Local Listener Status**: Memverifikasi apakah port lokal aktif mendengar koneksi TCP.
-   - **Host Latency Check**: Melakukan ping RTT ke SSH server secara berkala.
-   - **Scrollable Live Logs**: Log realtime proses `ssh` dengan navigasi scrolling keyboard `PgUp`/`PgDn` atau `J`/`K` serta indikator posisi scroll `[xx%]`.
-
-3. **Responsif**: Pada terminal dengan lebar < 110 kolom, antarmuka otomatis beralih ke layout tumpuk (stacked vertical) untuk menjaga kenyamanan pembacaan.
-
-## Deteksi Port Remote
-
-Dari formulir penambahan/pengeditan tunnel:
-1. Isi kolom **Host** (alias, nama host dari `~/.ssh/config`, atau `user@host`).
-2. Tekan `ctrl+d`: sshtui akan menjalankan pemindaian otomatis di server remote melalui SSH (`ss -ltnp`, fallback `netstat`, `lsof`) dengan indikator animasi spinner.
-3. Daftar port yang sedang listening akan muncul dalam dialog interaktif.
-4. Pilih salah satu port untuk otomatis melengkapi Port Remote, Remote Host, Port Lokal, dan Nama tunnel.
-
-Pemindaian port juga dapat dijalankan langsung via CLI tanpa TUI:
 ```bash
+# Menampilkan daftar konfigurasi tunnel
+sshtui list
+
+# Memindai port listening di server remote tanpa membuka TUI
 sshtui scan homelab
+
+# Menjalankan tunnel tertentu di foreground (Ctrl+C untuk berhenti)
+sshtui up "DMS Mazda"
+
+# Menjalankan semua tunnel sekaligus di foreground
+sshtui up --all
+
+# Menampilkan lokasi file konfigurasi yang sedang aktif
+sshtui path
 ```
 
-## Catatan Teknis
+---
 
-- Perintah `ssh` dieksekusi dengan opsi `BatchMode=yes`; autentikasi remote harus menggunakan SSH key atau SSH agent.
-- Pengaturan bind default adalah `127.0.0.1`.
-- Clipboard didukung di macOS (`pbcopy`), Linux (`wl-copy`, `xclip`, `xsel`), dan Windows (`clip.exe`).
+## 📁 Struktur Repositori
+
+```text
+cmd/sshtui/        # Entrypoint CLI dan loader TUI
+internal/config/   # Parser TOML, penyusun argumen SSH, dan resolusi host
+internal/tunnel/   # Runtime proses SSH -N, auto-reconnect, dan mesin telemetri RTT
+internal/detect/   # Deteksi port remote (ss, netstat, lsof)
+internal/tui/      # Antarmuka Bubble Tea, layout split-pane, inspector & modal
+docs/              # Spesifikasi desain teknis dan panduan implementasi
+AGENTS.md          # Panduan arsitektur untuk AI coding agents
+```
+
+---
+
+## 📄 Lisensi
+
+Didistribusikan di bawah lisensi MIT. Silakan gunakan dan kembangkan sesuai kebutuhan Anda.
