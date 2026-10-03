@@ -9,20 +9,27 @@ import (
 	"sshtui/internal/config"
 )
 
-func copyToClipboard(text string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
+var clipboardRunner = func(cmd *exec.Cmd) error {
+	return cmd.Run()
+}
+
+func clipboardCmd(goos string) (string, []string) {
+	switch goos {
 	case "darwin":
-		cmd = exec.Command("pbcopy")
+		return "pbcopy", nil
 	default:
 		if _, err := exec.LookPath("wl-copy"); err == nil {
-			cmd = exec.Command("wl-copy")
-		} else {
-			cmd = exec.Command("xclip", "-selection", "clipboard")
+			return "wl-copy", nil
 		}
+		return "xclip", []string{"-selection", "clipboard"}
 	}
+}
+
+func copyToClipboard(text string) error {
+	prog, args := clipboardCmd(runtime.GOOS)
+	cmd := exec.Command(prog, args...)
 	cmd.Stdin = strings.NewReader(text)
-	return cmd.Run()
+	return clipboardRunner(cmd)
 }
 
 func routeDiagram(t config.TunnelCfg, hostDest string) string {

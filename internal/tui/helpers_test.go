@@ -1,7 +1,8 @@
 package tui
 
 import (
-	"runtime"
+	"io"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -75,6 +76,20 @@ func TestRouteDiagram(t *testing.T) {
 }
 
 func TestCopyToClipboard(t *testing.T) {
+	var capturedCmd *exec.Cmd
+	var capturedInput string
+
+	origRunner := clipboardRunner
+	clipboardRunner = func(cmd *exec.Cmd) error {
+		capturedCmd = cmd
+		if cmd.Stdin != nil {
+			b, _ := io.ReadAll(cmd.Stdin)
+			capturedInput = string(b)
+		}
+		return nil
+	}
+	t.Cleanup(func() { clipboardRunner = origRunner })
+
 	testStrings := []string{
 		"sshtui-clipboard-test-token",
 		"",
@@ -82,9 +97,34 @@ func TestCopyToClipboard(t *testing.T) {
 	}
 
 	for _, str := range testStrings {
+		capturedInput = ""
+		capturedCmd = nil
 		err := copyToClipboard(str)
-		if runtime.GOOS == "darwin" && err != nil {
-			t.Fatalf("unexpected copyToClipboard error on darwin for input %q: %v", str, err)
+		if err != nil {
+			t.Fatalf("unexpected copyToClipboard error for input %q: %v", str, err)
+		}
+		if capturedInput != str {
+			t.Errorf("expected captured stdin %q, got %q", str, capturedInput)
+		}
+		if capturedCmd == nil {
+			t.Errorf("expected clipboard command to be created")
+		}
+	}
+}
+
+func TestClipboardCmd(t *testing.T) {
+	prog, args := clipboardCmd("darwin")
+	if prog != "pbcopy" || len(args) != 0 {
+		t.Errorf("expected darwin to use pbcopy, got %s %v", prog, args)
+	}
+
+	prog, args = clipboardCmd("linux")
+	if prog != "wl-copy" && prog != "xclip" {
+		t.Errorf("expected linux to use wl-copy or xclip, got %s", prog)
+	}
+	if prog == "xclip" {
+		if len(args) != 2 || args[0] != "-selection" || args[1] != "clipboard" {
+			t.Errorf("expected xclip args [-selection clipboard], got %v", args)
 		}
 	}
 }

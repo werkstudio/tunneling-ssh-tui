@@ -109,7 +109,7 @@ func TestViewInspector(t *testing.T) {
 	m := New(cfg, "/cfg", nil).(model)
 	m.width = 120
 
-	insp := m.viewInspector(tun, snap, 60)
+	insp := m.viewInspector(tun, snap, 100)
 
 	// 1. Route diagram
 	if !strings.Contains(insp, "8891") || !strings.Contains(insp, "20128") {
@@ -137,9 +137,15 @@ func TestViewInspector(t *testing.T) {
 	}
 
 	// Also verify package function viewInspector
-	pkgInsp := viewInspector(tun, snap, 60)
+	pkgInsp := viewInspector(tun, snap, 100)
 	if !strings.Contains(pkgInsp, "8891") {
 		t.Errorf("package viewInspector should also work")
+	}
+
+	// Truncation on narrow width
+	narrowInsp := m.viewInspector(tun, snap, 35)
+	if !strings.Contains(narrowInsp, "…") {
+		t.Errorf("expected route diagram to be truncated in narrow inspector, got:\n%s", narrowInsp)
 	}
 }
 

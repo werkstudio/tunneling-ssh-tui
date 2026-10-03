@@ -28,7 +28,11 @@ func TestCheckLocalPort(t *testing.T) {
 		t.Errorf("expected empty bind to default to 127.0.0.1 and be listening")
 	}
 
-	// Pick an unused port by briefly binding and closing
+	// Verify caching: closing listener shouldn't immediately change status within 1s TTL
+	_ = l.Close()
+	if !CheckLocalPort("127.0.0.1", port) {
+		t.Errorf("expected cached listening status for port %d within TTL", port)
+	}
 	lUnused, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to find free port: %v", err)

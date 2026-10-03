@@ -782,6 +782,7 @@ func (m model) viewInspector(t config.TunnelCfg, snap tunnel.Snapshot, inner int
 		hostDest = fmt.Sprintf("%s:22", hostDest)
 	}
 	diag := routeDiagram(t, hostDest)
+	diag = truncate(diag, inner)
 
 	var latencyBadge string
 	if rtt, err := tunnel.ProbeHost(m.cfg, t.Host); err != nil {

@@ -11,9 +11,11 @@ import (
 )
 
 var (
-	cacheMu     sync.RWMutex
-	latencyMap  = make(map[string]latencyEntry)
-	cacheExpiry = 5 * time.Second
+	cacheMu      sync.RWMutex
+	latencyMap   = make(map[string]latencyEntry)
+	cacheExpiry  = 5 * time.Second
+	portCheckMap = make(map[string]portCheckEntry)
+	portCheckTTL = 1 * time.Second
 )
 
 type latencyEntry struct {
@@ -22,17 +24,37 @@ type latencyEntry struct {
 	checkedAt time.Time
 }
 
+type portCheckEntry struct {
+	open      bool
+	checkedAt time.Time
+}
+
 // CheckLocalPort checks if a local address:port is actively listening.
 func CheckLocalPort(bind string, port int) bool {
 	if bind == "" {
 		bind = "127.0.0.1"
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(bind, strconv.Itoa(port)), 200*time.Millisecond)
-	if err != nil {
-		return false
+	addr := net.JoinHostPort(bind, strconv.Itoa(port))
+
+	cacheMu.RLock()
+	entry, exists := portCheckMap[addr]
+	cacheMu.RUnlock()
+
+	if exists && time.Since(entry.checkedAt) < portCheckTTL {
+		return entry.open
 	}
-	_ = conn.Close()
-	return true
+
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	open := (err == nil)
+	if err == nil {
+		_ = conn.Close()
+	}
+
+	cacheMu.Lock()
+	portCheckMap[addr] = portCheckEntry{open: open, checkedAt: time.Now()}
+	cacheMu.Unlock()
+
+	return open
 }
 
 // ProbeHost measures round-trip connection time to the SSH host.
